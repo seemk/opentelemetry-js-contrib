@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 
-import * as api from '@opentelemetry/api';
+import {
+  context,
+  Context,
+  diag,
+  trace,
+  SpanKind,
+  SpanStatusCode,
+} from '@opentelemetry/api';
 import {
   InstrumentationBase,
   InstrumentationNodeModuleDefinition,
@@ -52,11 +59,11 @@ export class MySQL2Instrumentation extends InstrumentationBase<any> {
         'mysql2',
         ['>= 1.4.2 < 3.0'],
         (moduleExports: any, moduleVersion) => {
-          api.diag.debug(`Patching mysql@${moduleVersion}`);
+          diag.debug(`Patching mysql@${moduleVersion}`);
 
           const ConnectionPrototype: mysqlTypes.Connection =
             moduleExports.Connection.prototype;
-          api.diag.debug('Patching Connection.prototype.query');
+          diag.debug('Patching Connection.prototype.query');
           if (isWrapped(ConnectionPrototype.query)) {
             this._unwrap(ConnectionPrototype, 'query');
           }
@@ -75,6 +82,14 @@ export class MySQL2Instrumentation extends InstrumentationBase<any> {
             this._patchQuery(moduleExports.format) as any
           );
 
+          const PoolPrototype: mysqlTypes.Pool = moduleExports.Pool.prototype;
+
+          if (isWrapped(PoolPrototype.getConnection)) {
+            this._unwrap(PoolPrototype, 'getConnection');
+          }
+
+          this._wrap(PoolPrototype, 'getConnection', this._patchGetConnection() as any);
+
           return moduleExports;
         },
         (moduleExports: any) => {
@@ -83,6 +98,9 @@ export class MySQL2Instrumentation extends InstrumentationBase<any> {
             moduleExports.Connection.prototype;
           this._unwrap(ConnectionPrototype, 'query');
           this._unwrap(ConnectionPrototype, 'execute');
+
+          const PoolPrototype: mysqlTypes.Pool = moduleExports.Pool.prototype;
+          this._unwrap(PoolPrototype, 'getConnection');
         }
       ),
     ];
@@ -91,7 +109,7 @@ export class MySQL2Instrumentation extends InstrumentationBase<any> {
   private _patchQuery(format: formatType) {
     return (originalQuery: Function): Function => {
       const thisPlugin = this;
-      api.diag.debug('MySQL2Instrumentation: patched mysql query/execute');
+      diag.debug('MySQL2Instrumentation: patched mysql query/execute');
 
       return function query(
         this: mysqlTypes.Connection,
@@ -107,7 +125,7 @@ export class MySQL2Instrumentation extends InstrumentationBase<any> {
         }
 
         const span = thisPlugin.tracer.startSpan(getSpanName(query), {
-          kind: api.SpanKind.CLIENT,
+          kind: SpanKind.CLIENT,
           attributes: {
             ...MySQL2Instrumentation.COMMON_ATTRIBUTES,
             ...getConnectionAttributes(this.config),
@@ -121,7 +139,7 @@ export class MySQL2Instrumentation extends InstrumentationBase<any> {
         const endSpan = once((err?: any, results?: any) => {
           if (err) {
             span.setStatus({
-              code: api.SpanStatusCode.ERROR,
+              code: SpanStatusCode.ERROR,
               message: err.message,
             });
           } else {
@@ -149,14 +167,15 @@ export class MySQL2Instrumentation extends InstrumentationBase<any> {
             thisPlugin._wrap(
               query as any,
               'onResult',
-              thisPlugin._patchCallbackQuery(endSpan)
+              thisPlugin._patchCallback(endSpan, context.active())
             );
           }
 
-          const streamableQuery: mysqlTypes.Query = originalQuery.apply(
+          console.log('streamable query ctx', context.active());
+          const streamableQuery: mysqlTypes.Query = context.with(context.active(), () => originalQuery.apply(
             this,
             arguments
-          );
+          ));
 
           // `end` in mysql behaves similarly to `result` in mysql2.
           streamableQuery
@@ -164,23 +183,24 @@ export class MySQL2Instrumentation extends InstrumentationBase<any> {
               endSpan(err);
             })
             .once('result', results => {
+              console.log('result ctx', context.active());
               endSpan(undefined, results);
             });
 
-          return streamableQuery;
+          return context.bind(context.active(), streamableQuery);
         }
 
         if (typeof arguments[1] === 'function') {
           thisPlugin._wrap(
             arguments,
             1,
-            thisPlugin._patchCallbackQuery(endSpan)
+            thisPlugin._patchCallback(endSpan, context.active())
           );
         } else if (typeof arguments[2] === 'function') {
           thisPlugin._wrap(
             arguments,
             2,
-            thisPlugin._patchCallbackQuery(endSpan)
+            thisPlugin._patchCallback(endSpan, context.active())
           );
         }
 
@@ -189,15 +209,51 @@ export class MySQL2Instrumentation extends InstrumentationBase<any> {
     };
   }
 
-  private _patchCallbackQuery(endSpan: Function) {
-    return (originalCallback: Function) => {
-      return function (
-        err: mysqlTypes.QueryError | null,
-        results?: any,
-        fields?: mysqlTypes.FieldPacket[]
+  private _patchGetConnection() {
+    return (original: Function) => {
+      const thisPlugin = this;
+
+      return function getConnection(
+        this: mysqlTypes.Pool,
+        callback: (err?: NodeJS.ErrnoException, connection?: mysqlTypes.PoolConnection) => any,
       ) {
-        endSpan(err, results);
-        return originalCallback(...arguments);
+        const span = thisPlugin.tracer.startSpan('mysql2.get-connection', {
+          kind: SpanKind.CLIENT,
+          attributes: {
+            ...MySQL2Instrumentation.COMMON_ATTRIBUTES,
+            ...getConnectionAttributes(this.config),
+          },
+        });
+
+        const endSpan = once((err?: NodeJS.ErrnoException, connection?: mysqlTypes.PoolConnection) => {
+          if (err) {
+            span.recordException(err);
+            span.setStatus({
+              code: SpanStatusCode.ERROR,
+              message: err.message,
+            });
+          }
+          span.end();
+        });
+
+        console.log(arguments);
+        console.log('patch callback ctx', context.active());
+        thisPlugin._wrap(arguments, 0, thisPlugin._patchCallback(endSpan, context.active()));
+        console.log(arguments);
+
+        return context.with(trace.setSpan(context.active(), span), () => {
+          return original.apply(this, arguments);
+        });
+      };
+    };
+  }
+
+  private _patchCallback(endSpan: Function, ctx: Context) {
+    return (originalCallback: Function) => {
+      return function patchedCallback(...args: unknown[]) {
+        console.log(ctx);
+        endSpan(...args);
+        return context.with(ctx, () => originalCallback(...args));
       };
     };
   }
