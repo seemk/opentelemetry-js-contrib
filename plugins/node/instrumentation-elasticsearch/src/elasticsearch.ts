@@ -17,13 +17,13 @@ import { diag, context, trace, Span } from '@opentelemetry/api';
 import { suppressTracing } from '@opentelemetry/core';
 import type * as elasticsearch from '@elastic/elasticsearch';
 import { ElasticsearchInstrumentationConfig } from './types';
+import { PACKAGE_NAME, PACKAGE_VERSION } from './version';
 import {
   InstrumentationBase,
   InstrumentationModuleDefinition,
   InstrumentationNodeModuleDefinition,
   InstrumentationNodeModuleFile,
 } from '@opentelemetry/instrumentation';
-import { VERSION } from '../../../version';
 import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import {
   startSpan,
@@ -39,23 +39,13 @@ enum AttributeNames {
   ELASTICSEARCH_INDICES = 'elasticsearch.request.indices',
 }
 
-export class ElasticsearchInstrumentation extends InstrumentationBase {
+export class ElasticsearchInstrumentation extends InstrumentationBase<ElasticsearchInstrumentationConfig> {
   static readonly component = '@elastic/elasticsearch';
 
-  protected override _config: ElasticsearchInstrumentationConfig = {};
   private _isEnabled = false;
-  private moduleVersion?: string;
 
   constructor(config: ElasticsearchInstrumentationConfig = {}) {
-    super(
-      'splunk-opentelemetry-instrumentation-elasticsearch',
-      VERSION,
-      Object.assign({}, config)
-    );
-  }
-
-  override setConfig(config: ElasticsearchInstrumentationConfig = {}) {
-    this._config = Object.assign({}, config);
+    super(PACKAGE_NAME, PACKAGE_VERSION, config);
   }
 
   protected init(): InstrumentationModuleDefinition {
@@ -64,11 +54,10 @@ export class ElasticsearchInstrumentation extends InstrumentationBase {
         new InstrumentationNodeModuleFile(
           `@elastic/elasticsearch/api/${path}`,
           ['>=5 <8'],
-          (moduleExports, moduleVersion) => {
+          (moduleExports) => {
             diag.debug(
               `elasticsearch instrumentation: patch elasticsearch ${operationClassName}.`
             );
-            this.moduleVersion = moduleVersion;
             this._isEnabled = true;
 
             const modulePrototypeKeys = Object.keys(moduleExports.prototype);
@@ -153,12 +142,11 @@ export class ElasticsearchInstrumentation extends InstrumentationBase {
             [SemanticAttributes.DB_OPERATION]: operation,
             [AttributeNames.ELASTICSEARCH_INDICES]: getIndexName(params),
             [SemanticAttributes.DB_STATEMENT]: (
-              instrumentation._config.dbStatementSerializer ||
+              instrumentation.getConfig().dbStatementSerializer ||
               defaultDbStatementSerializer
             )(operation, params, options),
           },
         });
-        instrumentation._addModuleVersionIfNeeded(span);
 
         if (originalCallback) {
           const wrappedCallback = function (
@@ -169,7 +157,7 @@ export class ElasticsearchInstrumentation extends InstrumentationBase {
             if (err) {
               onError(span, err);
             } else {
-              onResponse(span, result, instrumentation._config.responseHook);
+              onResponse(span, result, instrumentation.getConfig().responseHook);
             }
 
             return originalCallback.call(this, err, result);
@@ -184,7 +172,7 @@ export class ElasticsearchInstrumentation extends InstrumentationBase {
           );
           promise.then(
             (result: elasticsearch.ApiResponse) => {
-              onResponse(span, result, instrumentation._config.responseHook);
+              onResponse(span, result, instrumentation.getConfig().responseHook);
               return result;
             },
             (err: Error) => {
@@ -203,24 +191,11 @@ export class ElasticsearchInstrumentation extends InstrumentationBase {
     span: Span,
     originalFunction: (...args: unknown[]) => T
   ): T {
-    if (this._config?.suppressInternalInstrumentation) {
+    if (this.getConfig().suppressInternalInstrumentation) {
       return context.with(suppressTracing(context.active()), originalFunction);
     } else {
       const activeContextWithSpan = trace.setSpan(context.active(), span);
       return context.with(activeContextWithSpan, originalFunction);
-    }
-  }
-
-  private _addModuleVersionIfNeeded(span: Span) {
-    if (this.moduleVersion === undefined) {
-      return;
-    }
-
-    if (this._config.moduleVersionAttributeName) {
-      span.setAttribute(
-        this._config.moduleVersionAttributeName,
-        this.moduleVersion
-      );
     }
   }
 }
