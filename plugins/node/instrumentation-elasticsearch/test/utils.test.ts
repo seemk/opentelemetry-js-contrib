@@ -1,11 +1,11 @@
 /*
- * Copyright Splunk Inc.
+ * Copyright The OpenTelemetry Authors, Aspecto
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,16 +16,16 @@
 import * as sinon from 'sinon';
 import * as assert from 'assert';
 import * as Utils from '../src/utils';
-import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
-import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
+import { trace, SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import {
+  SEMATTRS_DB_SYSTEM,
+  SEMATTRS_NET_PEER_NAME,
+  SEMATTRS_NET_PEER_PORT,
+  SEMATTRS_NET_TRANSPORT,
+} from '@opentelemetry/semantic-conventions';
 
 describe('elasticsearch utils', () => {
-  const spanMock = {
-    recordException: (err) => {},
-    setStatus: (obj) => {},
-    end: () => {},
-    setAttributes: (obj) => {},
-  };
+  const spanMock = trace.getTracer('test').startSpan('test');
 
   context('defaultDbStatementSerializer', () => {
     it('should serialize', () => {
@@ -75,7 +75,7 @@ describe('elasticsearch utils', () => {
       const endStub = sinon.stub(spanMock, 'end');
 
       Utils.onResponse(spanMock, {
-        meta: { connection: { url: 'http://localhost' } },
+        meta: { connection: { url: new URL('http://localhost') } },
       });
 
       sinon.assert.calledOnce(setAttributesStub);
@@ -97,7 +97,7 @@ describe('elasticsearch utils', () => {
 
       Utils.onResponse(
         spanMock,
-        { meta: { connection: { url: 'http://localhost' } } },
+        { meta: { connection: { url: new URL('http://localhost') } } },
         responseHook
       );
 
@@ -119,21 +119,15 @@ describe('elasticsearch utils', () => {
     const attributes = Utils.getNetAttributes(url);
 
     it('should get hostname from url', () => {
-      assert.strictEqual(
-        attributes[SemanticAttributes.NET_PEER_NAME],
-        'localhost'
-      );
+      assert.strictEqual(attributes[SEMATTRS_NET_PEER_NAME], 'localhost');
     });
 
     it('should get hostname from url', () => {
-      assert.strictEqual(attributes[SemanticAttributes.NET_PEER_PORT], '9200');
+      assert.strictEqual(attributes[SEMATTRS_NET_PEER_PORT], '9200');
     });
 
     it('should set net.transport', () => {
-      assert.strictEqual(
-        attributes[SemanticAttributes.NET_TRANSPORT],
-        'IP.TCP'
-      );
+      assert.strictEqual(attributes[SEMATTRS_NET_TRANSPORT], 'IP.TCP');
     });
   });
 
@@ -157,8 +151,11 @@ describe('elasticsearch utils', () => {
   context('normalizeArguments', () => {
     it('should normalize with callback only', () => {
       const callbackFunction = () => {};
-      const [params, options, callback] =
-        Utils.normalizeArguments(callbackFunction);
+      const [params, options, callback] = Utils.normalizeArguments(
+        callbackFunction,
+        undefined,
+        undefined
+      );
 
       assert.deepStrictEqual(params, {});
       assert.deepStrictEqual(options, {});
@@ -166,9 +163,13 @@ describe('elasticsearch utils', () => {
     });
 
     it('should normalize with params only', () => {
-      const [params, options, callback] = Utils.normalizeArguments({
-        index: 'test',
-      });
+      const [params, options, callback] = Utils.normalizeArguments(
+        {
+          index: 'test',
+        },
+        undefined,
+        undefined
+      );
 
       assert.deepStrictEqual(params, { index: 'test' });
       assert.strictEqual(options, undefined);
@@ -206,11 +207,8 @@ describe('elasticsearch utils', () => {
   });
 
   context('startSpan', () => {
-    const tracerMock = {
-      startSpan: (name, options?, context?): any => {},
-      startActiveSpan: () => {},
-    };
     it('should start span with client kind', () => {
+      const tracerMock = trace.getTracer('test');
       const startSpanStub = sinon.stub(tracerMock, 'startSpan');
 
       Utils.startSpan({
@@ -223,12 +221,12 @@ describe('elasticsearch utils', () => {
       const [operation, options] = startSpanStub.getCall(0).args;
 
       assert.strictEqual(operation, 'elasticsearch.request');
-      assert.strictEqual(options.kind, SpanKind.CLIENT);
+      assert.strictEqual(options?.kind, SpanKind.CLIENT);
       assert.strictEqual(
-        options.attributes[SemanticAttributes.DB_SYSTEM],
+        options?.attributes?.[SEMATTRS_DB_SYSTEM],
         'elasticsearch'
       );
-      assert.strictEqual(options.attributes.testAttribute, 'testValue');
+      assert.strictEqual(options.attributes?.testAttribute, 'testValue');
     });
   });
 });

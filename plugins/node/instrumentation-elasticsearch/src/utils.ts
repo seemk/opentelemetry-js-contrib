@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 import {
+  Attributes,
   Tracer,
-  SpanAttributes,
   SpanStatusCode,
   diag,
   Span,
@@ -23,12 +23,16 @@ import {
 } from '@opentelemetry/api';
 import { DbStatementSerializer, ResponseHook } from './types';
 import { safeExecuteInTheMiddle } from '@opentelemetry/instrumentation';
-import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
-import type { ApiResponse } from '@elastic/elasticsearch/lib/Transport';
+import {
+  SEMATTRS_DB_SYSTEM,
+  SEMATTRS_NET_TRANSPORT,
+  SEMATTRS_NET_PEER_NAME,
+  SEMATTRS_NET_PEER_PORT,
+} from '@opentelemetry/semantic-conventions';
 
 interface StartSpanPayload {
   tracer: Tracer;
-  attributes: SpanAttributes;
+  attributes: Attributes;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -50,7 +54,7 @@ export function startSpan({ tracer, attributes }: StartSpanPayload): Span {
   return tracer.startSpan('elasticsearch.request', {
     kind: SpanKind.CLIENT,
     attributes: {
-      [SemanticAttributes.DB_SYSTEM]: 'elasticsearch',
+      [SEMATTRS_DB_SYSTEM]: 'elasticsearch',
       ...attributes,
     },
   });
@@ -83,19 +87,19 @@ export function getPort(port: string, protocol: string): string {
   return '';
 }
 
-export function getNetAttributes(url: string): SpanAttributes {
+export function getNetAttributes(url: string): Attributes {
   const { port, protocol, hostname } = new URL(url);
 
   return {
-    [SemanticAttributes.NET_TRANSPORT]: 'IP.TCP',
-    [SemanticAttributes.NET_PEER_NAME]: hostname,
-    [SemanticAttributes.NET_PEER_PORT]: getPort(port, protocol),
+    [SEMATTRS_NET_TRANSPORT]: 'IP.TCP',
+    [SEMATTRS_NET_PEER_NAME]: hostname,
+    [SEMATTRS_NET_PEER_PORT]: getPort(port, protocol),
   };
 }
 
 export function onResponse(
   span: Span,
-  result: ApiResponse,
+  result: { meta: { connection: { url: URL } } },
   responseHook?: ResponseHook
 ) {
   span.setAttributes({
@@ -109,7 +113,7 @@ export function onResponse(
   if (responseHook) {
     safeExecuteInTheMiddle(
       () => responseHook(span, result),
-      (e) => {
+      e => {
         if (e) {
           diag.error('elasticsearch instrumentation: responseHook error', e);
         }

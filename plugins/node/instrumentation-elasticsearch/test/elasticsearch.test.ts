@@ -1,11 +1,11 @@
 /*
- * Copyright Splunk Inc.
+ * Copyright The OpenTelemetry Authors, Aspecto
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,10 +16,15 @@
 import * as nock from 'nock';
 import * as assert from 'assert';
 import * as os from 'os';
-import { getTestSpans, registerInstrumentationTesting } from '@opentelemetry/contrib-test-utils';
+import {
+  getTestSpans,
+  registerInstrumentationTesting,
+} from '@opentelemetry/contrib-test-utils';
 import { ElasticsearchInstrumentation } from '../src';
 
-const instrumentation = registerInstrumentationTesting(new ElasticsearchInstrumentation());
+const instrumentation = registerInstrumentationTesting(
+  new ElasticsearchInstrumentation()
+);
 
 import { Client } from '@elastic/elasticsearch';
 const esMockUrl = 'http://localhost:9200';
@@ -48,7 +53,6 @@ describe('elasticsearch instrumentation', () => {
     // TODO: The instrumentation does not seem to hook properly on windows.
     if (os.platform() === 'win32') {
       this.skip();
-      return;
     }
     esNock.get('/the-simpsons/_search').reply(200, {});
     esNock.post('/the-simpsons/_doc').reply(200, {});
@@ -92,7 +96,6 @@ describe('elasticsearch instrumentation', () => {
   it('should create another valid span', async function () {
     if (os.platform() === 'win32') {
       this.skip();
-      return;
     }
     esNock.get('/_cluster/settings').reply(200, {});
 

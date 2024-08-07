@@ -24,7 +24,10 @@ import {
   InstrumentationNodeModuleDefinition,
   InstrumentationNodeModuleFile,
 } from '@opentelemetry/instrumentation';
-import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
+import {
+  SEMATTRS_DB_OPERATION,
+  SEMATTRS_DB_STATEMENT,
+} from '@opentelemetry/semantic-conventions';
 import {
   startSpan,
   onError,
@@ -54,7 +57,7 @@ export class ElasticsearchInstrumentation extends InstrumentationBase<Elasticsea
         new InstrumentationNodeModuleFile(
           `@elastic/elasticsearch/api/${path}`,
           ['>=5 <8'],
-          (moduleExports) => {
+          moduleExports => {
             diag.debug(
               `elasticsearch instrumentation: patch elasticsearch ${operationClassName}.`
             );
@@ -62,7 +65,7 @@ export class ElasticsearchInstrumentation extends InstrumentationBase<Elasticsea
 
             const modulePrototypeKeys = Object.keys(moduleExports.prototype);
             if (modulePrototypeKeys.length > 0) {
-              modulePrototypeKeys.forEach((functionName) => {
+              modulePrototypeKeys.forEach(functionName => {
                 this._wrap(
                   moduleExports.prototype,
                   functionName,
@@ -80,13 +83,13 @@ export class ElasticsearchInstrumentation extends InstrumentationBase<Elasticsea
               return module;
             };
           },
-          (moduleExports) => {
-            diag.debug(`elasticsearch instrumentation: unpatch elasticsearch.`);
+          moduleExports => {
+            diag.debug('elasticsearch instrumentation: unpatch elasticsearch.');
             this._isEnabled = false;
 
             const modulePrototypeKeys = Object.keys(moduleExports.prototype);
             if (modulePrototypeKeys.length > 0) {
-              modulePrototypeKeys.forEach((functionName) => {
+              modulePrototypeKeys.forEach(functionName => {
                 this._unwrap(moduleExports.prototype, functionName);
               });
             } else {
@@ -109,7 +112,7 @@ export class ElasticsearchInstrumentation extends InstrumentationBase<Elasticsea
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private patchObject(operationClassName: string, object: any) {
-    Object.keys(object).forEach((functionName) => {
+    Object.keys(object).forEach(functionName => {
       if (typeof object[functionName] === 'object') {
         this.patchObject(functionName, object[functionName]);
       } else {
@@ -139,9 +142,9 @@ export class ElasticsearchInstrumentation extends InstrumentationBase<Elasticsea
         const span = startSpan({
           tracer: instrumentation.tracer,
           attributes: {
-            [SemanticAttributes.DB_OPERATION]: operation,
+            [SEMATTRS_DB_OPERATION]: operation,
             [AttributeNames.ELASTICSEARCH_INDICES]: getIndexName(params),
-            [SemanticAttributes.DB_STATEMENT]: (
+            [SEMATTRS_DB_STATEMENT]: (
               instrumentation.getConfig().dbStatementSerializer ||
               defaultDbStatementSerializer
             )(operation, params, options),
@@ -157,7 +160,11 @@ export class ElasticsearchInstrumentation extends InstrumentationBase<Elasticsea
             if (err) {
               onError(span, err);
             } else {
-              onResponse(span, result, instrumentation.getConfig().responseHook);
+              onResponse(
+                span,
+                result,
+                instrumentation.getConfig().responseHook
+              );
             }
 
             return originalCallback.call(this, err, result);
@@ -172,7 +179,11 @@ export class ElasticsearchInstrumentation extends InstrumentationBase<Elasticsea
           );
           promise.then(
             (result: elasticsearch.ApiResponse) => {
-              onResponse(span, result, instrumentation.getConfig().responseHook);
+              onResponse(
+                span,
+                result,
+                instrumentation.getConfig().responseHook
+              );
               return result;
             },
             (err: Error) => {
